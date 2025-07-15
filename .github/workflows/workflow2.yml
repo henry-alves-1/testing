@@ -1,4 +1,4 @@
-name: Ação Manual com "Checkboxes" V2
+name: Ação Manual com "Checkboxes"
 
 on:
   workflow_dispatch:
