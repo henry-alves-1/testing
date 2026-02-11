@@ -1,7 +1,9 @@
 # .github/workflows/parent.yml
 name: Parent Workflow
 
+
 on:
+  workflow_dispatch:
   push:
 
 jobs:
