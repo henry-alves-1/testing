@@ -1,33 +1,11 @@
-name: Ação Manual com "Checkboxes"
+# .github/workflows/child.yml
+name: Child Workflow
 
 on:
-  workflow_dispatch:
-    inputs:
-      build:
-        description: 'Executar step de build?'
-        required: false
-        type: boolean
-      test:
-        description: 'Executar step de testes?'
-        required: false
-        type: boolean
-      deploy:
-        description: 'Executar step de deploy?'
-        required: false
-        type: boolean
+  workflow_call:
 
 jobs:
-  executar-steps:
+  child-job:
     runs-on: ubuntu-latest
     steps:
-      - name: Step de build
-        if: ${{ inputs.build == true }}
-        run: echo "Build foi executado"
-
-      - name: Step de testes
-        if: ${{ inputs.test == true }}
-        run: echo "Testes foram executados"
-
-      - name: Step de deploy
-        if: ${{ inputs.deploy == true }}
-        run: echo "Deploy foi executado"
+      - run: echo "Hello from child"
