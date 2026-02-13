@@ -1,30 +1,56 @@
-name: Conditional job execution
+name: Conditional Jobs Workflow
 
 on:
-  push:
   workflow_dispatch:
+  push:
 
 jobs:
   job_a:
-    name: Job A (manual)
+    name: Job A - Workflow Dispatch Only
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Job A ran"
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run Job A
+        run: |
+          echo "Job A is running (triggered by workflow_dispatch)"
+          echo "Event: ${{ github.event_name }}"
 
   job_b:
-    name: Job B (push)
+    name: Job B - Push Only
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Job B ran"
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run Job B
+        run: |
+          echo "Job B is running (triggered by push)"
+          echo "Event: ${{ github.event_name }}"
 
   job_c:
-    name: Job C (runs if A OR B ran)
-    runs-on: ubuntu-latest
-    needs: [job_a, job_b]
+    name: Job C - Runs After A or B
+    # Runs if either job_a OR job_b completed (but not both, since only one can run per trigger)
+    # We use always() to evaluate even if previous jobs were skipped
+    # Then check that exactly one of them didn't get skipped
     if: |
-      needs.job_a.result == 'success' ||
-      needs.job_b.result == 'success'
+      always() && 
+      (
+        (needs.job_a.result == 'success' && needs.job_b.result == 'skipped') ||
+        (needs.job_a.result == 'skipped' && needs.job_b.result == 'success')
+      )
+    needs: [job_a, job_b]
+    runs-on: ubuntu-latest
     steps:
-      - run: echo "Job C ran because A or B ran"
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run Job C
+        run: |
+          echo "Job C is running"
+          echo "Job A result: ${{ needs.job_a.result }}"
+          echo "Job B result: ${{ needs.job_b.result }}"
+          echo "Triggered by: ${{ github.event_name }}"
