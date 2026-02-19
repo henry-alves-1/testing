@@ -11,17 +11,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Print changed files
         run: |
           BEFORE="${{ github.event.before }}"
           AFTER="${{ github.event.after }}"
 
-          # If github.event.before is all zeros, this is the first push (no previous commit)
+          # If github.event.before is all zeros (new branch), fall back to the commit's parent
           if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
-            echo "First push to this branch — no previous commit to compare against."
-            exit 0
+            echo "New branch detected — comparing against parent commit of the pushed commit."
+            BEFORE="${AFTER}^"
           fi
 
           echo "Comparing $BEFORE → $AFTER"
