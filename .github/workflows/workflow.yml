@@ -13,7 +13,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check if merge commit
+        id: check_merge
+        run: |
+          PARENT_COUNT=$(git log -1 --format="%P" | wc -w)
+          echo "parent_count=$PARENT_COUNT" >> $GITHUB_OUTPUT
+
       - name: Print changed files
+        if: github.ref == 'refs/heads/main' || steps.check_merge.outputs.parent_count == '1'
         run: |
           BEFORE="${{ github.event.before }}"
           AFTER="${{ github.event.after }}"
