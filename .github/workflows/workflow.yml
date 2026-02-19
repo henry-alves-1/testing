@@ -1,19 +1,53 @@
-# .github/workflows/child.yml
-name: Child Workflow
+name: Print Changed Files
 
 on:
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: "Target environment"
-        required: true
-        type: string
+  push:
 
 jobs:
-  child-job:
+  print-changed-files:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Show input
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Print changed files
         run: |
-          echo "Running child workflow"
-          echo "Environment: ${{ inputs.environment }}"
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+
+          # If github.event.before is all zeros, this is the first push (no previous commit)
+          if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+            echo "First push to this branch — no previous commit to compare against."
+            exit 0
+          fi
+
+          echo "Comparing $BEFORE → $AFTER"
+          echo "================================================"
+
+          # Get list of changed files
+          CHANGED_FILES=$(git diff --name-only "$BEFORE" "$AFTER")
+
+          if [[ -z "$CHANGED_FILES" ]]; then
+            echo "No files changed."
+            exit 0
+          fi
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          echo "================================================"
+
+          # Print contents of each changed file
+          while IFS= read -r file; do
+            echo ""
+            echo "###############################################"
+            echo "FILE: $file"
+            echo "###############################################"
+            if [[ -f "$file" ]]; then
+              cat "$file"
+            else
+              echo "(file was deleted)"
+            fi
+          done <<< "$CHANGED_FILES"
