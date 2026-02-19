@@ -13,11 +13,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check if merge commit
-        id: check_merge
+      - name: Print changed files (non-main)
+        if: github.ref != 'refs/heads/main'
         run: |
-          PARENT_COUNT=$(git log -1 --format="%P" | wc -w)
-          echo "parent_count=$PARENT_COUNT" >> $GITHUB_OUTPUT
+          BASE_REF="${{ github.event.before }}"
+          HEAD_REF="${{ github.event.after }}"
+
+          PARENT_COUNT=$(git log -1 --format="%P" $HEAD_REF | wc -w)
+
+          if [ "$PARENT_COUNT" -gt 1 ]; then
+            PARENT1=$(git log -1 --format="%P" $HEAD_REF | awk '{print $1}')
+            PARENT2=$(git log -1 --format="%P" $HEAD_REF | awk '{print $2}')
+            echo "Files changed beyond the merge (e.g. conflict resolutions):"
+            git diff --name-only $PARENT2 $HEAD_REF
+          else
+            git diff --name-only $BASE_REF $HEAD_REF
+          fi
+
+      - name: Print changed files (main)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          BASE_REF="${{ github.event.before }}"
+          HEAD_REF="${{ github.event.after }}"
+
+          git diff --name-only $BASE_REF $HEAD_REF
 
       - name: Print changed files
         if: github.ref == 'refs/heads/main' || steps.check_merge.outputs.parent_count == '1'
