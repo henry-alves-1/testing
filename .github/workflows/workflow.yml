@@ -26,7 +26,7 @@ jobs:
           # ---------------------------------------------------------------
           if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
             echo "New branch — listing all tracked files"
-            CHANGED=$(git ls-files)
+            CHANGED=$(git diff --name-only "${AFTER}^")
 
           # ---------------------------------------------------------------
           # CASE 2 – Merge commit (two parents)
