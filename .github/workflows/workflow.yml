@@ -4,64 +4,119 @@ on:
   push:
 
 jobs:
-  print-changed-files:
+  changed-files:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Full history needed to diff merges properly
 
-      - name: Get Changed files
-        id: get-changed-files
+      - name: Detect push type and print changed files
         run: |
-          BEFORE="${{ github.event.before }}"
-          AFTER="${{ github.sha }}"
+          COMMIT_SHA="${{ github.sha }}"
+          CURRENT_BRANCH="${{ github.ref_name }}"
+          PARENT_COUNT=$(git cat-file -p "$COMMIT_SHA" | grep -c "^parent ")
 
-          # ---------------------------------------------------------------
-          # CASE 1 - First push on a brand-new branch (no previous commit)
-          # ---------------------------------------------------------------
-          if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
-            echo "New branch detected — comparing against parent commit of the pushed commit."
-            CHANGED_FILES=$(git diff --name-only "${AFTER}^")
+          echo "============================================"
+          echo "Commit  : $COMMIT_SHA"
+          echo "Branch  : $CURRENT_BRANCH"
+          echo "Parents : $PARENT_COUNT"
+          echo "============================================"
 
-          # ---------------------------------------------------------------
-          # CASE 2 - Merge commit (two parents)
-          # ---------------------------------------------------------------
-          elif git rev-parse --verify "${AFTER}^2" > /dev/null 2>&1; then
-            PARENT_1=$(git rev-parse "${AFTER}^1")
-            PARENT_2=$(git rev-parse "${AFTER}^2")
-            
-            # ---------------------------------------------------------------
-            # CASE 2.1 - Merge commit to Main
-            # ---------------------------------------------------------------
-            if [[ "${GITHUB_REF}" == 'refs/heads/main' ]]; then
-              echo "Merge commit to main detected — diffing against parent1 (${PARENT_1}) and parent2 (${PARENT_2})"
-              CHANGED_FILES=$(git diff --name-only "${PARENT_1}...${PARENT_2}")
+          if [ "$PARENT_COUNT" -ge 2 ]; then
+            # ── MERGE COMMIT ─────────────────────────────────────────────────────
+            PARENT_1=$(git log --pretty=format:'%P' -n 1 "$COMMIT_SHA" | awk '{print $1}')
+            PARENT_2=$(git log --pretty=format:'%P' -n 1 "$COMMIT_SHA" | awk '{print $2}')
 
-            # ---------------------------------------------------------------
-            # CASE 2.2 - Merge commit to a non-main branch
-            # ---------------------------------------------------------------
+            echo "Parent 1 : $PARENT_1"
+            echo "Parent 2 : $PARENT_2"
+            echo ""
+
+            # ── DIRECTION DETECTION (topology-based) ─────────────────────────────
+            #
+            # When Git records a merge commit the FIRST parent is always the branch
+            # that was checked out (HEAD) at merge time — i.e. the branch receiving
+            # the merge.  The SECOND parent is the tip of the branch that was merged
+            # IN.
+            #
+            # So:
+            #   PARENT_1  →  base branch  (the one we are currently on / receiving)
+            #   PARENT_2  →  incoming branch (the one that was merged in)
+            #
+            # This is guaranteed by git itself regardless of branch names.
+            #
+            # From this we can derive direction:
+            #   child-to-parent : incoming (P2) is a feature/short-lived branch
+            #                     that diverged from the base (P1) at some point.
+            #   parent-to-child : the base (P1) is a feature branch and the
+            #                     incoming (P2) comes from a longer-lived ancestor.
+            #
+            # We detect which case we are in by counting how many commits each
+            # parent has since the merge-base:
+            #   • More commits on P2 side  → P2 is the branch with accumulated work
+            #     being brought IN  (typical child→parent / PR merge).
+            #   • More commits on P1 side  → P1 had more work; P2 was a short sync
+            #     from upstream  (typical parent→child / "sync main into feature").
+
+            MERGE_BASE=$(git merge-base "$PARENT_1" "$PARENT_2")
+
+            P1_COMMITS=$(git rev-list --count "$MERGE_BASE".."$PARENT_1")
+            P2_COMMITS=$(git rev-list --count "$MERGE_BASE".."$PARENT_2")
+
+            echo "Merge base                     : $MERGE_BASE"
+            echo "Commits on P1 since merge-base : $P1_COMMITS"
+            echo "Commits on P2 since merge-base : $P2_COMMITS"
+            echo ""
+
+            # The parent with MORE commits is the "incoming" (source) branch.
+            # Tie-break: git convention → P1 is base, P2 is incoming.
+            if [ "$P2_COMMITS" -ge "$P1_COMMITS" ]; then
+              BASE_PARENT="$PARENT_1"
+              INCOMING_PARENT="$PARENT_2"
+              DIRECTION="child-to-parent (feature branch merged INTO $CURRENT_BRANCH)"
             else
-              echo "Merge commit to non-main branch detected — diffing against the merged commit (${AFTER}) and its parents (${PARENT_1} and ${PARENT_2})"
-              CHANGED_FILES=$(git diff --name-only ${AFTER}^ "${AFTER}")
+              BASE_PARENT="$PARENT_2"
+              INCOMING_PARENT="$PARENT_1"
+              DIRECTION="parent-to-child ($CURRENT_BRANCH received changes FROM upstream/parent)"
             fi
 
-          # ---------------------------------------------------------------
-          # CASE 3 - Regular push: diff previous commit against current HEAD
-          # ---------------------------------------------------------------
+            echo "Merge direction : $DIRECTION"
+            echo ""
+
+            echo "--------------------------------------------"
+            echo "Files changed by the INCOMING branch"
+            echo "(changes it introduced since the branches diverged)"
+            echo "--------------------------------------------"
+            git diff --name-status "$MERGE_BASE" "$INCOMING_PARENT"
+
+            echo ""
+            echo "--------------------------------------------"
+            echo "Files changed on the BASE branch since divergence"
+            echo "(what the base already had before this merge)"
+            echo "--------------------------------------------"
+            git diff --name-status "$MERGE_BASE" "$BASE_PARENT"
+
           else
-            echo "Regular push — diffing ${BEFORE} → ${AFTER}"
-            CHANGED_FILES=$(git diff --name-only "${BEFORE}" "${AFTER}")
+            # ── REGULAR (non-merge) PUSH ─────────────────────────────────────────
+            echo "Regular push (no merge)"
+            echo ""
+
+            BEFORE="${{ github.event.before }}"
+            AFTER="${{ github.event.after }}"
+
+            # First push to a brand-new branch: before SHA is all zeros
+            if echo "$BEFORE" | grep -qE "^0+$"; then
+              echo "First push to this branch — files in HEAD commit:"
+              git diff-tree --no-commit-id -r --name-status "$AFTER"
+            else
+              echo "Files changed between $BEFORE -> $AFTER :"
+              git diff --name-status "$BEFORE" "$AFTER"
+            fi
           fi
 
-          CHANGED_FILES_LIST=$(echo "$CHANGED_FILES" | awk '{printf "%s%s", sep, $0; sep=" , "}')
-          echo "Files changed: $CHANGED_FILES_LIST"
-
-          echo "files=$CHANGED_FILES_LIST"
-          echo "has_changed_files=$([ -z "$CHANGED_FILES_LIST" ] && echo "false" || echo "true")"
-
-          if [[ -n "${{ inputs.ENVIRONMENT }}" ]]; then
-            echo "override_placeholders=environment ${{ inputs.ENVIRONMENT }}"
-          fi
+          echo ""
+          echo "============================================"
+          echo "Done."
+          echo "============================================"
