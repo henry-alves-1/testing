@@ -8,72 +8,61 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Print changed files (non-main)
-        if: github.ref != 'refs/heads/main'
-        run: |
-          BASE_REF="${{ github.event.before }}"
-          HEAD_REF="${{ github.event.after }}"
-
-          PARENT_COUNT=$(git log -1 --format="%P" $HEAD_REF | wc -w)
-
-          if [ "$PARENT_COUNT" -gt 1 ]; then
-            PARENT1=$(git log -1 --format="%P" $HEAD_REF | awk '{print $1}')
-            PARENT2=$(git log -1 --format="%P" $HEAD_REF | awk '{print $2}')
-            echo "Files changed beyond the merge (e.g. conflict resolutions):"
-            git diff --name-only $PARENT2 $HEAD_REF
-          else
-            git diff --name-only $BASE_REF $HEAD_REF
-          fi
-
-      - name: Print changed files (main)
-        if: github.ref == 'refs/heads/main'
-        run: |
-          BASE_REF="${{ github.event.before }}"
-          HEAD_REF="${{ github.event.after }}"
-
-          git diff --name-only $BASE_REF $HEAD_REF
-
-      - name: Print changed files
-        if: github.ref == 'refs/heads/main' || steps.check_merge.outputs.parent_count == '1'
+      - name: Get Changed files
+        id: get-changed-files
         run: |
           BEFORE="${{ github.event.before }}"
-          AFTER="${{ github.event.after }}"
+          AFTER="${{ github.sha }}"
 
-          # If github.event.before is all zeros (new branch), fall back to the commit's parent
+          # ---------------------------------------------------------------
+          # CASE 1 - First push on a brand-new branch (no previous commit)
+          # ---------------------------------------------------------------
           if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
             echo "New branch detected — comparing against parent commit of the pushed commit."
-            BEFORE="${AFTER}^"
-          fi
+            CHANGED_FILES=$(git diff --name-only "${AFTER}^")
 
-          echo "Comparing $BEFORE → $AFTER"
-          echo "================================================"
+          # ---------------------------------------------------------------
+          # CASE 2 - Merge commit (two parents)
+          # ---------------------------------------------------------------
+          elif git rev-parse --verify "${AFTER}^2" > /dev/null 2>&1; then
+            PARENT_1=$(git rev-parse "${AFTER}^1")
+            PARENT_2=$(git rev-parse "${AFTER}^2")
+            
+            # ---------------------------------------------------------------
+            # CASE 2.1 - Merge commit to Main
+            # ---------------------------------------------------------------
+            if [[ "${GITHUB_REF}" == 'refs/heads/main' ]]; then
+              echo "Merge commit to main detected — diffing against parent1 (${PARENT_1}) and parent2 (${PARENT_2})"
+              CHANGED_FILES=$(git diff --name-only "${PARENT_1}...${PARENT_2}")
 
-          # Get list of changed files
-          CHANGED_FILES=$(git diff --name-only "$BEFORE" "$AFTER")
-
-          if [[ -z "$CHANGED_FILES" ]]; then
-            echo "No files changed."
-            exit 0
-          fi
-
-          echo "Changed files:"
-          echo "$CHANGED_FILES"
-          echo "================================================"
-
-          # Print contents of each changed file
-          while IFS= read -r file; do
-            echo ""
-            echo "###############################################"
-            echo "FILE: $file"
-            echo "###############################################"
-            if [[ -f "$file" ]]; then
-              cat "$file"
+            # ---------------------------------------------------------------
+            # CASE 2.2 - Merge commit to a non-main branch
+            # ---------------------------------------------------------------
             else
-              echo "(file was deleted)"
+              echo "Merge commit to non-main branch detected — diffing against the merged commit (${AFTER}) and its parents (${PARENT_1} and ${PARENT_2})"
+              CHANGED_FILES=$(git diff --name-only ${AFTER}^ "${AFTER}")
             fi
-          done <<< "$CHANGED_FILES"
+
+          # ---------------------------------------------------------------
+          # CASE 3 - Regular push: diff previous commit against current HEAD
+          # ---------------------------------------------------------------
+          else
+            echo "Regular push — diffing ${BEFORE} → ${AFTER}"
+            CHANGED_FILES=$(git diff --name-only "${BEFORE}" "${AFTER}")
+          fi
+
+          CHANGED_FILES_LIST=$(echo "$CHANGED_FILES" | awk '{printf "%s%s", sep, $0; sep=" , "}')
+          echo "Files changed: $CHANGED_FILES_LIST"
+
+          echo "files=$CHANGED_FILES_LIST"
+          echo "has_changed_files=$([ -z "$CHANGED_FILES_LIST" ] && echo "false" || echo "true")"
+
+          if [[ -n "${{ inputs.ENVIRONMENT }}" ]]; then
+            echo "override_placeholders=environment ${{ inputs.ENVIRONMENT }}"
+          fi
+    
