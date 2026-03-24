@@ -65,4 +65,3 @@ jobs:
           if [[ -n "${{ inputs.ENVIRONMENT }}" ]]; then
             echo "override_placeholders=environment ${{ inputs.ENVIRONMENT }}"
           fi
-    
